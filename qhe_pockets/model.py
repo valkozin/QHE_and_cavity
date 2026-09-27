@@ -42,6 +42,7 @@ class Potential:
 
     V(d) = Vwall * ((d0 - d)/d0)^2 * theta(d0 - d)            (smooth wall)
            - Vdip * window(d; d_in, d_out, s) * selector        (pocket)
+    or, for kind == 'image', the image-charge term below instead of the window.
 
     ``edges`` chooses where the pocket exists:
       'none'     - standard sample
@@ -61,6 +62,15 @@ class Potential:
     edges: str = 'none'
     seg: tuple = (130, 170)  # x-window for edges == 'segment'
     seg_s: float = 3.0
+    # kind == 'image': instead of the rectangular pocket use the image-charge
+    # potential of a metal plate parallel to the edge (arXiv:2511.04744),
+    #   -Eimg * [1/(d + dedge) - 1/(dc + dedge)] * theta(dc - d),
+    # dedge = edge-metal distance; the constant makes it vanish at d = dc
+    # (middle of the bar), so the bulk and the opposite edge are untouched.
+    kind: str = 'window'
+    Eimg: float = 0.0
+    dedge: float = 18.0
+    dc: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -81,7 +91,14 @@ def window(d, p):
     return 0.5 * (np.tanh((d - p.d_in) / p.s) - np.tanh((d - p.d_out) / p.s))
 
 
+def image(d, p):
+    d = np.asarray(d, float)
+    return p.Eimg * np.where(d < p.dc, 1 / (d + p.dedge) - 1 / (p.dc + p.dedge), 0.0)
+
+
 def edge_profile(d, p, sel=1.0):
+    if p.kind == 'image':
+        return wall(d, p) - image(d, p) * sel
     return wall(d, p) - p.Vdip * window(d, p) * sel
 
 
@@ -263,3 +280,32 @@ def transport(fsyst, gauge, phi, E):
         V=V, T=T, N=np.array([sm.num_propagating(i) for i in range(6)]),
     )
     return out
+
+
+def make_bar(prm):
+    """Plain two-terminal bar (no probe arms), same edge profile: the
+    geometry in which arXiv:2511.04744 computes G(E_F)."""
+    g = replace(prm.geo, arm_x=())
+    prm = replace(prm, geo=g)
+    syst = kwant.Builder()
+    for (x, y), v in site_potential(prm).items():
+        syst[LAT(x, y)] = 4.0 + v
+    syst[LAT.neighbors()] = _hop
+    for direction, i in [(-1, 0), (+1, 1)]:
+        ld = kwant.Builder(kwant.TranslationalSymmetry((direction, 0)))
+        for y in range(g.W):
+            ld[LAT(0, y)] = 4.0 + float(lead_potential_x(y, prm))
+        ld[LAT.neighbors()] = _lead_hop(i)
+        syst.attach_lead(ld)
+    fsyst = syst.finalized()
+    return fsyst, kwant.physics.magnetic_gauge(fsyst)
+
+
+def transport_2t(fsyst, gauge, phi, E):
+    """Two-terminal conductance G = T(0 -> 1) in e^2/h."""
+    B = 2 * phi
+    phases = gauge(B, B, B)
+    sm = kwant.smatrix(fsyst, E, params={'peierls': phases[0],
+                                         'peierls_lead0': phases[1],
+                                         'peierls_lead1': phases[2]})
+    return sm.transmission(1, 0), sm.num_propagating(0)
