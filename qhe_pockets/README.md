@@ -372,6 +372,7 @@ Kwant. Справа — формулы Ландауэра–Бюттикера �
   (мостик) и по `E_F` (мостик и двухтерминальный брусок) → `data/img_*.npz`,
   `data/efhb_*.npz`, `data/ef2t_*.npz`.
 * `plots_image.py` — рисунки 8–10.
+* `note/note.tex`, `note/note.pdf` — сводная заметка (LaTeX, собирается `tectonic note.tex`).
 
 Запуск (нужен Kwant ≥ 1.4):
 
